@@ -11,6 +11,9 @@ import tf
 import cv2
 import yaml
 
+import math
+import numpy as np
+
 STATE_COUNT_THRESHOLD = 3
 
 class TLDetector(object):
@@ -70,7 +73,7 @@ class TLDetector(object):
         """
         self.has_image = True
         self.camera_image = msg
-        light_wp, state = self.process_traffic_lights()
+        light_wp, state = self.process_traffic_lights
 
         '''
         Publish upcoming red lights at camera frequency.
@@ -83,14 +86,15 @@ class TLDetector(object):
             self.state = state
         elif self.state_count >= STATE_COUNT_THRESHOLD:
             self.last_state = self.state
-            light_wp = light_wp if state == TrafficLight.RED else -1
+            if __name__ == '__main__':
+                light_wp = light_wp if state == TrafficLight.RED else -1
             self.last_wp = light_wp
             self.upcoming_red_light_pub.publish(Int32(light_wp))
         else:
             self.upcoming_red_light_pub.publish(Int32(self.last_wp))
         self.state_count += 1
 
-    def get_closest_waypoint(self, pose):
+    def get_closest_waypoint(self, pose=None, x=-1, y=-1):
         """Identifies the closest path waypoint to the given position
             https://en.wikipedia.org/wiki/Closest_pair_of_points_problem
         Args:
@@ -98,11 +102,26 @@ class TLDetector(object):
 
         Returns:
             int: index of the closest waypoint in self.waypoints
-
         """
         #TODO implement
-        return 0
+        closest_wp = -1
+        closest_dist = 10000000
+        
+        d1 = lambda a, b: math.sqrt((a.x-b.x)**2 + (a.y-b.y)**2)
+        d2 = lambda x, y, b: math.sqrt((x-b.x)**2 + (y-b.y)**2)
 
+        if self.waypoints:
+            for i in range(0,len(self.waypoints.waypoints)):
+                if pose:
+                    d = d1(pose.position, self.waypoints.waypoints[i].pose.pose.position)
+                else:
+                    d = d2(x, y, self.waypoints.waypoints[i].pose.pose.position)
+
+                if d<closest_dist:
+                    closest_dist = d
+                    closest_wp = i
+
+        return closest_wp
 
     def project_to_image_plane(self, point_in_world):
         """Project point from 3D world coordinates to 2D camera image location
@@ -115,7 +134,6 @@ class TLDetector(object):
             y (int): y coordinate of target point in image
 
         """
-
         fx = self.config['camera_info']['focal_length_x']
         fy = self.config['camera_info']['focal_length_y']
         image_width = self.config['camera_info']['image_width']
@@ -135,8 +153,33 @@ class TLDetector(object):
 
         #TODO Use tranform and rotation to calculate 2D position of light in image
 
-        x = 0
-        y = 0
+        #test
+        if (trans):
+            px = point_in_world.x
+            py = point_in_world.y
+            pz = point_in_world.z
+            xt = trans[0]
+            yt = trans[1]
+            zt = trans[2]
+
+            # Convert rotation vector from quaternion to euler:
+            euler = tf.transformations.euler_from_quaternion(rot)
+            sinyaw = math.sin(euler[2])
+            cosyaw = math.cos(euler[2])
+
+            # Rotation followed by translation
+            Rnt = (
+                px * cosyaw - py * sinyaw + xt,
+                px * sinyaw + py * cosyaw + yt,
+                pz + zt)
+
+            # Pinhole camera model w/o distorion
+            x = int(fx * -Rnt[1] / Rnt[0] + image_width / 2)
+            y = int(fy * -Rnt[2] / Rnt[0] + image_height / 2)
+
+        else:
+            x = 0
+            y = 0
 
         return (x, y)
 
@@ -157,12 +200,25 @@ class TLDetector(object):
         cv_image = self.bridge.imgmsg_to_cv2(self.camera_image, "bgr8")
 
         x, y = self.project_to_image_plane(light.pose.pose.position)
+        #img_marked = cv2.circle(cv_image, (x, y), 5, color=(255, 255, 255))
+        #cv2.imwrite('marked.jpg', img_marked)
+        #print (x,y)
 
         #TODO use light location to zoom in on traffic light in image
 
-        #Get classification
-        return self.light_classifier.get_classification(cv_image)
+        pts1 = np.float32([[x-200,y-150],[x+200,y-150],[x-200,y+150],[x+200,y+150]])
+        pts2 = np.float32([[0, 0], [800, 0], [0, 600], [800, 600]])
+        M = cv2.getPerspectiveTransform(pts1, pts2)
+        img_zoomed = cv2.warpPerspective(cv_image, M, (800, 600))
 
+        #cv2.imwrite('zoomed.jpg',img_zoomed)
+
+        #Get classification
+        state = self.light_classifier.get_classification(img_zoomed)
+
+        return state
+
+    @property
     def process_traffic_lights(self):
         """Finds closest visible traffic light, if one exists, and determines its
             location and color
@@ -172,20 +228,41 @@ class TLDetector(object):
             int: ID of traffic light color (specified in styx_msgs/TrafficLight)
 
         """
-        light = None
 
         # List of positions that correspond to the line to stop in front of for a given intersection
         stop_line_positions = self.config['stop_line_positions']
+
         if(self.pose):
             car_position = self.get_closest_waypoint(self.pose.pose)
+            #print ('car pos: ', car_position)
 
         #TODO find the closest visible traffic light (if one exists)
+        #use available info for now
 
-        if light:
-            state = self.get_light_state(light)
-            return light_wp, state
-        self.waypoints = None
-        return -1, TrafficLight.UNKNOWN
+        closest_dist = 100000
+        closest_stopline_wp = -1
+        #closest_light_wp = -1
+        state = 4
+        if(self.lights):
+            for i in range(len(self.lights)):
+                light_pos = self.get_closest_waypoint(self.lights[i].pose.pose)
+                #light_position = self.get_closest_waypoint(stop_line_positions[i])
+                d = abs(car_position-light_pos)
+                if closest_dist > d:
+                    closest_dist = d
+                    closest_light = i
+
+            #closest_light_wp = self.get_closest_waypoint(self.lights[closest_light].pose.pose)
+            #print ('light pos: ', closest_light_wp)
+
+            stop_line_x = stop_line_positions[closest_light][0]
+            stop_line_y = stop_line_positions[closest_light][1]
+            closest_stopline_wp = self.get_closest_waypoint(x=stop_line_x,y=stop_line_y)
+            #print ('stopline pos: ', closest_stopline_wp)
+
+            state = self.get_light_state(self.lights[closest_light])
+
+        return closest_stopline_wp, state
 
 if __name__ == '__main__':
     try:
