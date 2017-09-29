@@ -13,6 +13,7 @@ import yaml
 
 import math
 import numpy as np
+from tf.transformations import euler_from_quaternion
 
 STATE_COUNT_THRESHOLD = 3
 
@@ -115,7 +116,7 @@ class TLDetector(object):
                     stopline_wp = wp
             self.stopline_wps.append(stopline_wp)
 
-    def get_closest_waypoint(self, pose=None, x=-1, y=-1):
+    def get_closest_waypoint(self, pose):
         """Identifies the closest path waypoint to the given position
             https://en.wikipedia.org/wiki/Closest_pair_of_points_problem
         Args:
@@ -128,21 +129,27 @@ class TLDetector(object):
         closest_wp = -1
         closest_dist = 10000000
 
-        d1 = lambda a, b: math.sqrt((a.x-b.x)**2 + (a.y-b.y)**2)
-        d2 = lambda x, y, b: math.sqrt((x-b.x)**2 + (y-b.y)**2)
+        get_dist = lambda a, b: math.sqrt((a.x-b.x)**2 + (a.y-b.y)**2  + (a.z-b.z)**2)
 
         if self.waypoints:
-            for i in range(0,len(self.waypoints.waypoints)):
-                #calculate next waypoint for vehicle
-                if pose:
-                    d = d1(pose.position, self.waypoints.waypoints[i].pose.pose.position)
-                #calculate closes waypoint for stopline
-                else:
-                    d = d2(x, y, self.waypoints.waypoints[i].pose.pose.position)
-
+            for wp in range(len(self.waypoints.waypoints)):
+                d = get_dist(pose.position, self.waypoints.waypoints[wp].pose.pose.position)
                 if d<closest_dist:
                     closest_dist = d
-                    closest_wp = i
+                    closest_wp = wp
+
+            x = self.waypoints.waypoints[closest_wp].pose.pose.position.x
+            y = self.waypoints.waypoints[closest_wp].pose.pose.position.y
+            heading = np.arctan2((y - pose.position.y), (x - pose.position.x))
+            euler = euler_from_quaternion([pose.orientation.x,
+                                           pose.orientation.y,
+                                           pose.orientation.z,
+                                           pose.orientation.w])
+            theta = euler[2]
+            angle = np.abs(theta-heading)
+
+            if angle > np.pi/4:
+                closest_wp +=1
 
         return closest_wp
 
@@ -257,7 +264,7 @@ class TLDetector(object):
 
         if(self.pose):
             car_position = self.get_closest_waypoint(self.pose.pose)
-            #print ('car pos: ', car_position)
+            print ('car pos: ', car_position)
 
         #TODO find the closest visible traffic light (if one exists)
         #use available info for now
@@ -278,9 +285,9 @@ class TLDetector(object):
             #closest_light_wp = self.get_closest_waypoint(self.lights[closest_light].pose.pose)
             #print ('light pos: ', closest_light_wp)
 
-            stop_line_x = stop_line_positions[closest_light][0]
-            stop_line_y = stop_line_positions[closest_light][1]
-            closest_stopline_wp = self.get_closest_waypoint(x=stop_line_x,y=stop_line_y)
+            #stop_line_x = stop_line_positions[closest_light][0]
+            #stop_line_y = stop_line_positions[closest_light][1]
+            #closest_stopline_wp = self.get_closest_waypoint(x=stop_line_x,y=stop_line_y)
             #print ('stopline pos: ', closest_stopline_wp)
 
             state = self.get_light_state(self.lights[closest_light])
