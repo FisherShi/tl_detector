@@ -26,7 +26,7 @@ class TLDetector(object):
         self.lights = []
 
         sub1 = rospy.Subscriber('/current_pose', PoseStamped, self.pose_cb)
-        sub2 = rospy.Subscriber('/base_waypoints', Lane, self.waypoints_cb)
+        self.sub2 = rospy.Subscriber('/base_waypoints', Lane, self.waypoints_cb)
 
         '''
         /vehicle/traffic_lights provides you with the location of the traffic light in 3D map space and
@@ -58,7 +58,12 @@ class TLDetector(object):
         self.pose = msg
 
     def waypoints_cb(self, waypoints):
-        self.waypoints = waypoints
+        #only load waypoints once
+        if self.waypoints is None:
+            self.waypoints = waypoints
+            print('waypoints loaded')
+        else:
+            self.sub2.unregister()
 
     def traffic_cb(self, msg):
         self.lights = msg.lights
@@ -90,8 +95,10 @@ class TLDetector(object):
                 light_wp = light_wp if state == TrafficLight.RED else -1
             self.last_wp = light_wp
             self.upcoming_red_light_pub.publish(Int32(light_wp))
+            print(light_wp)
         else:
             self.upcoming_red_light_pub.publish(Int32(self.last_wp))
+            print(light_wp)
         self.state_count += 1
 
     def get_closest_waypoint(self, pose=None, x=-1, y=-1):
