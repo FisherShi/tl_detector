@@ -24,9 +24,10 @@ class TLDetector(object):
         self.waypoints = None
         self.camera_image = None
         self.lights = []
+        self.stopline_wps = []
 
         sub1 = rospy.Subscriber('/current_pose', PoseStamped, self.pose_cb)
-        self.sub2 = rospy.Subscriber('/base_waypoints', Lane, self.waypoints_cb)
+        sub2 = rospy.Subscriber('/base_waypoints', Lane, self.waypoints_cb)
 
         '''
         /vehicle/traffic_lights provides you with the location of the traffic light in 3D map space and
@@ -62,8 +63,9 @@ class TLDetector(object):
         if self.waypoints is None:
             self.waypoints = waypoints
             print('waypoints loaded')
-        else:
-            self.sub2.unregister()
+            self.get_stopline_waypoint()
+            print('stopline waypoints loaded')
+            print(self.stopline_wps)
 
     def traffic_cb(self, msg):
         self.lights = msg.lights
@@ -101,6 +103,18 @@ class TLDetector(object):
             print(light_wp)
         self.state_count += 1
 
+    def get_stopline_waypoint(self):
+        get_dist = lambda a, b: math.sqrt((a.x - b[0]) ** 2 + (a.y - b[1]) ** 2)
+        for stopline in range(len(self.config['stop_line_positions'])):
+            closest_dist = 100000
+            stopline_wp = -1
+            for wp in range(len(self.waypoints.waypoints)):
+                d = get_dist(self.waypoints.waypoints[wp].pose.pose.position,self.config['stop_line_positions'][stopline])
+                if closest_dist > d:
+                    closest_dist = d
+                    stopline_wp = wp
+            self.stopline_wps.append(stopline_wp)
+
     def get_closest_waypoint(self, pose=None, x=-1, y=-1):
         """Identifies the closest path waypoint to the given position
             https://en.wikipedia.org/wiki/Closest_pair_of_points_problem
@@ -113,14 +127,16 @@ class TLDetector(object):
         #TODO implement
         closest_wp = -1
         closest_dist = 10000000
-        
+
         d1 = lambda a, b: math.sqrt((a.x-b.x)**2 + (a.y-b.y)**2)
         d2 = lambda x, y, b: math.sqrt((x-b.x)**2 + (y-b.y)**2)
 
         if self.waypoints:
             for i in range(0,len(self.waypoints.waypoints)):
+                #calculate next waypoint for vehicle
                 if pose:
                     d = d1(pose.position, self.waypoints.waypoints[i].pose.pose.position)
+                #calculate closes waypoint for stopline
                 else:
                     d = d2(x, y, self.waypoints.waypoints[i].pose.pose.position)
 
