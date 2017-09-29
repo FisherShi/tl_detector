@@ -63,7 +63,7 @@ class TLDetector(object):
         #only load waypoints once
         if self.waypoints is None:
             self.waypoints = waypoints
-            print('waypoints loaded')
+            print('base waypoints loaded')
             self.get_stopline_waypoint()
             print('stopline waypoints loaded')
             print(self.stopline_wps)
@@ -98,10 +98,11 @@ class TLDetector(object):
                 light_wp = light_wp if state == TrafficLight.RED else -1
             self.last_wp = light_wp
             self.upcoming_red_light_pub.publish(Int32(light_wp))
-            print(light_wp)
         else:
             self.upcoming_red_light_pub.publish(Int32(self.last_wp))
-            print(light_wp)
+
+        print('upcoming red light: ',light_wp)
+        print('state: ', state)
         self.state_count += 1
 
     def get_stopline_waypoint(self):
@@ -153,66 +154,6 @@ class TLDetector(object):
 
         return closest_wp
 
-    def project_to_image_plane(self, point_in_world):
-        """Project point from 3D world coordinates to 2D camera image location
-
-        Args:
-            point_in_world (Point): 3D location of a point in the world
-
-        Returns:
-            x (int): x coordinate of target point in image
-            y (int): y coordinate of target point in image
-
-        """
-        fx = self.config['camera_info']['focal_length_x']
-        fy = self.config['camera_info']['focal_length_y']
-        image_width = self.config['camera_info']['image_width']
-        image_height = self.config['camera_info']['image_height']
-
-        # get transform between pose of camera and world frame
-        trans = None
-        try:
-            now = rospy.Time.now()
-            self.listener.waitForTransform("/base_link",
-                  "/world", now, rospy.Duration(1.0))
-            (trans, rot) = self.listener.lookupTransform("/base_link",
-                  "/world", now)
-
-        except (tf.Exception, tf.LookupException, tf.ConnectivityException):
-            rospy.logerr("Failed to find camera to map transform")
-
-        #TODO Use tranform and rotation to calculate 2D position of light in image
-
-        #test
-        if (trans):
-            px = point_in_world.x
-            py = point_in_world.y
-            pz = point_in_world.z
-            xt = trans[0]
-            yt = trans[1]
-            zt = trans[2]
-
-            # Convert rotation vector from quaternion to euler:
-            euler = tf.transformations.euler_from_quaternion(rot)
-            sinyaw = math.sin(euler[2])
-            cosyaw = math.cos(euler[2])
-
-            # Rotation followed by translation
-            Rnt = (
-                px * cosyaw - py * sinyaw + xt,
-                px * sinyaw + py * cosyaw + yt,
-                pz + zt)
-
-            # Pinhole camera model w/o distorion
-            x = int(fx * -Rnt[1] / Rnt[0] + image_width / 2)
-            y = int(fy * -Rnt[2] / Rnt[0] + image_height / 2)
-
-        else:
-            x = 0
-            y = 0
-
-        return (x, y)
-
     def get_light_state(self, light):
         """Determines the current color of the traffic light
 
@@ -228,23 +169,8 @@ class TLDetector(object):
             return False
 
         cv_image = self.bridge.imgmsg_to_cv2(self.camera_image, "bgr8")
-
-        x, y = self.project_to_image_plane(light.pose.pose.position)
-        #img_marked = cv2.circle(cv_image, (x, y), 5, color=(255, 255, 255))
-        #cv2.imwrite('marked.jpg', img_marked)
-        #print (x,y)
-
-        #TODO use light location to zoom in on traffic light in image
-
-        pts1 = np.float32([[x-200,y-150],[x+200,y-150],[x-200,y+150],[x+200,y+150]])
-        pts2 = np.float32([[0, 0], [800, 0], [0, 600], [800, 600]])
-        M = cv2.getPerspectiveTransform(pts1, pts2)
-        img_zoomed = cv2.warpPerspective(cv_image, M, (800, 600))
-
-        #cv2.imwrite('zoomed.jpg',img_zoomed)
-
         #Get classification
-        state = self.light_classifier.get_classification(img_zoomed)
+        state = self.light_classifier.get_classification(cv_image)
 
         return state
 
@@ -264,33 +190,28 @@ class TLDetector(object):
 
         if(self.pose):
             car_position = self.get_closest_waypoint(self.pose.pose)
-            print ('car pos: ', car_position)
+            #print ('car pos: ', car_position)
 
         #TODO find the closest visible traffic light (if one exists)
         #use available info for now
 
         closest_dist = 100000
+        closest_stopline = -1
         closest_stopline_wp = -1
-        #closest_light_wp = -1
         state = 4
-        if(self.lights):
-            for i in range(len(self.lights)):
-                light_pos = self.get_closest_waypoint(self.lights[i].pose.pose)
-                #light_position = self.get_closest_waypoint(stop_line_positions[i])
-                d = abs(car_position-light_pos)
-                if closest_dist > d:
+        if(self.stopline_wps):
+            for i in range(len(self.stopline_wps)):
+                d = self.stopline_wps[i] - car_position
+                #only consider lights that's ahead of the car
+                if (d > 0) & (closest_dist > d):
                     closest_dist = d
-                    closest_light = i
+                    closest_stopline = i
 
-            #closest_light_wp = self.get_closest_waypoint(self.lights[closest_light].pose.pose)
-            #print ('light pos: ', closest_light_wp)
+            closest_stopline_wp = self.stopline_wps[closest_stopline]
 
-            #stop_line_x = stop_line_positions[closest_light][0]
-            #stop_line_y = stop_line_positions[closest_light][1]
-            #closest_stopline_wp = self.get_closest_waypoint(x=stop_line_x,y=stop_line_y)
-            #print ('stopline pos: ', closest_stopline_wp)
-
-            state = self.get_light_state(self.lights[closest_light])
+            #only run traffic light classifier when the upcoming light is within 100m range
+            if closest_dist < 100:
+                state = self.get_light_state(self.lights[closest_stopline])
 
         return closest_stopline_wp, state
 
